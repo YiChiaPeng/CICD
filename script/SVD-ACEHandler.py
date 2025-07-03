@@ -265,7 +265,6 @@ def main():
 
     svd_ace_handler = SVDACEHandler(system_id=system_id, account=account, password=password)
     # print(svd_ace_handler.get_nodes_state(26))  # 假設專案 ID 為 26
-    print(svd_ace_handler.get_projects())
     if args.firmware_path:
         firmware_version = args.version or project_name + datetime.now().strftime("%Y%m%d%H%M%S")
         svd_ace_handler.smi_upload(project_name, args.firmware_path, firmware_version)
