@@ -18,10 +18,11 @@ pipeline {
         stage('Firmware upload') {
             steps {
                 echo 'Firmware upload'
-                PYTHON ./script/SVD-ACEHandler.py -s VCT6
+                sh "${PYTHON} ./script/SVD-ACEHandler.py -s VCT6"
+                
             }
         }
-        main
+        
 
         // stage('Deploy .bin to Remote Server') {
         //     steps {
