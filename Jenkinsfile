@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        UFS_BIN_FILE = 'my_firmware.bin'
+        UFS_BIN_FILE = 'ace6.bin'
       
         PYTHON = 'python' // 如果你用的是 Windows 或 pyenv，這裡可以改成 python
     }
@@ -18,7 +18,7 @@ pipeline {
         stage('Firmware upload') {
             steps {
                 echo 'Firmware upload'
-                sh "${PYTHON} ./script/SVD-ACEHandler.py -s VCT6"
+                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -pth ${UFS_BIN_FILE}"
                 
             }
         }

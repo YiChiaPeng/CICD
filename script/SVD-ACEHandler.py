@@ -5,6 +5,8 @@ from time import sleep
 import argparse
 import os
 import json
+from collections import defaultdict
+from datetime import datetime
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 設定 logging 同時輸出到 terminal 和 log 檔案
@@ -54,6 +56,7 @@ class SVDACEHandler:
             "sec-ch-ua-platform": '"Windows"'
         }
         self._login(account,password)
+        # update sql
 
     def _login(self,account,password)-> None:
         """
@@ -187,12 +190,12 @@ class SVDACEHandler:
         except requests.exceptions.RequestException as e:
             logging.error(f"An error occurred while uploading file: {e}")
             return False
-        
-        print(response.text)
+        finally:
+            logging.info(response.text)
 
 
     
-    def get_projects(self,system_id:str) -> list:
+    def get_projects(self) -> list:
         '''獲取所有專案
         <option value = "RDLAB3"selected>RDLAB_ACE5</option>
                         <option value = "RDLAB1">RDLAB_ACE3</option>
@@ -212,24 +215,40 @@ class SVDACEHandler:
         url = f"{URL_REPORT_SERVER}/smimongodb"
         params = {
             "collection": "ProjectManagementDataBase",
-            "json":str({'enable':'YES','systemid':system_id}),  # 換成你要查的 systemid
+            #"json":str({'enable':'YES','systemid':system_id}),  # 換成你要查的 systemid
+            "json":str({'enable':'YES'}),
             "field": "{'systemid':1, 'projectId':1,'projectName':1, '_id':0}"
         }
 
         self.headers['Content-Type'] = "application/json;charset=UTF-8"
         
         response = self.session.get(url, params=params, headers=self.headers)
-
         return response.json()
+
+
+        project_name_to_systemid = defaultdict(list)
+        for item in response.json():
+            project_name_to_systemid[item['projectName']].append({
+                "system_id": item['systemid'],
+                "project_id": item.get('projectId') or item.get('project_id')
+            })
+        
+        return project_name_to_systemid
 
     
 
 def main():
     parser = argparse.ArgumentParser(description="SVD ACE Handler CLI")
-    parser.add_argument("-s", "--system", required=True, help="System ID (e.g., VCT6)")
+    
+    parser.add_argument("-sys", "--system", required=True, help="System ID (e.g., VCT6)")
+    parser.add_argument("-pjn", "--project_name", required=True, help="Project Name (e.g., RT_ACE6600_DVT_Web_Test)")
+    # login related
     parser.add_argument("-c", "--config", default="./.config", help="Config file path (default: ./.config)")
     parser.add_argument("-a", "--account", help="Account name")
     parser.add_argument("-p", "--password", help="Password")
+    # firmware uplaod related
+    parser.add_argument("-pth", "--firmware_path", help="Firmware bin file path (e.g., ../ace.bin)")
+    parser.add_argument("-v", "--version", help="Firmware version (optional)")
     args = parser.parse_args()
 
     # 讀取 config
@@ -242,9 +261,15 @@ def main():
     account = args.account or config.get("account", "kent.peng")
     password = args.password or config.get("password", "Ff113065532")
     system_id = args.system
+    project_name = args.project_name
 
     svd_ace_handler = SVDACEHandler(system_id=system_id, account=account, password=password)
-    print(svd_ace_handler.get_nodes_state(26))  # 假設專案 ID 為 26
-    print(svd_ace_handler.get_projects(system_id))
+    # print(svd_ace_handler.get_nodes_state(26))  # 假設專案 ID 為 26
+    print(svd_ace_handler.get_projects())
+    if args.firmware_path:
+        firmware_version = args.version or project_name + datetime.now().strftime("%Y%m%d%H%M%S")
+        svd_ace_handler.smi_upload(project_name, args.firmware_path, firmware_version)
 if __name__ == "__main__":
+    
     main()
+    
