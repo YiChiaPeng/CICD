@@ -56,8 +56,6 @@ class SVDACEHandler:
         }
         self._login(account,password)
         
-        project_id = next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None)
-        print(project_id)
         self.project_id = kwargs.get('project_id', next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None))  # 預設專案 ID 為 26
         # update sql
 
@@ -123,7 +121,7 @@ class SVDACEHandler:
         Args:
             test_class_ids (list): 測試類別 ID 列表
         '''
-        
+        print(len(test_list))
         
         for test_item  in test_list:
             
@@ -132,18 +130,19 @@ class SVDACEHandler:
                 logging.info("No idle nodes found, waiting for 5 seconds...")
                 sleep(5)  # 等待 5 秒後再次檢查
                 idle_nodes = [node for node in self.get_nodes_state(self.project_id) if node.get('state') == "IDLE"]
+
+
             self.execute_task([idle_nodes[0]['id']], [test_item['test_class_ids']], test_item['stop_on_failure'], test_item['times'])
 
             logging.info(f"Executed task on node {idle_nodes[0]['id']} for test class {test_item['test_class_ids']} with stop_on_failure={test_item['stop_on_failure']} and times={test_item['times']}")
 
-    def execute_task(self, project_id: int,node_ids:list, test_class_ids: list,stop_on_failure:bool=False,times:int=1) -> None:
+    def execute_task(self,node_ids:list, test_class_ids: list,stop_on_failure:bool=False,times:int=1) -> None:
         '''
         node_ids: list of node ids to execute task
         test_class_ids: list of test class ids to execute task
         stop_on_failure: if True, stop the task on failure      
         times: number of times to execute the task
         '''
-        
         
         payload = {
             "nodeIds": ",".join(str(node_id) for node_id in node_ids),
@@ -153,7 +152,7 @@ class SVDACEHandler:
             "times": times
         }
         self.headers["Content-Type"] = "application/json"
-        self.headers["Referer"] = f"{self.url_api_base}/home/groups/{project_id}"
+        self.headers["Referer"] = f"{self.url_api_base}/home/groups/{self.project_id}"
         self.headers["X-Requested-With"] = "XMLHttpRequest"
        
         try:
