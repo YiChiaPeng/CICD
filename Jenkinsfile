@@ -24,6 +24,37 @@ pipeline {
         }
         
 
+        stage('Engineering Sample Test (ES)') {
+            steps {
+                echo 'Run Engineering Sample Test (ES)'
+                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv ES"
+                
+            }
+        }
+
+
+        stage('Qualified Sample Test (QS)') {
+            steps {
+                echo 'Run Qualified Sample Test (QS)'
+                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv QS"
+                
+            }
+        }
+
+
+        stage('Commercial Test (CS)') {
+            steps {
+                echo 'Run Commercial Test (CS)'
+                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv CS"
+                
+            }
+        }
+
+
+
+        
+        
+
         // stage('Deploy .bin to Remote Server') {
         //     steps {
         //         script {

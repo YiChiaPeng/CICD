@@ -36,13 +36,12 @@ URL_REPORT_SERVER = "http://ace-report.siliconmotion.com.tw:8080//dev_micky"
         
 class SVDACEHandler:
 
-    def __init__(self,system_id: str,account: str = "kent.peng", password: str = "Ff113065532"):
+    def __init__(self,system_id: str,account: str = "kent.peng", password: str = "Ff113065532",**kwargs):
 
         global URL_API_BASE_option
-       
+        self.session = requests.Session()
         self.system_id = system_id
         self.account = account
-        self.session = requests.Session()
         self.url_api_base = URL_API_BASE_option.get(self.system_id, "https://svdno6.siliconmotion.com.tw")
         
         
@@ -56,7 +55,14 @@ class SVDACEHandler:
             "sec-ch-ua-platform": '"Windows"'
         }
         self._login(account,password)
+        
+        project_id = next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None)
+        print(project_id)
+        self.project_id = kwargs.get('project_id', next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None))  # 預設專案 ID 為 26
         # update sql
+
+
+
 
     def _login(self,account,password)-> None:
         """
@@ -112,22 +118,23 @@ class SVDACEHandler:
 
         return nodes_state
 
-    def test_parallel(self,project_id: int,test_list: list) -> None:
+    def test_parallel(self,test_list: list) -> None:
         '''執行指定專案中指定測試類別的測試
         Args:
-            project_id (int): 專案 ID
             test_class_ids (list): 測試類別 ID 列表
         '''
         
         
         for test_item  in test_list:
             
-            idle_nodes = [node for node in self.get_nodes_state(project_id) if node.get('state') == "IDLE"]
+            idle_nodes = [node for node in self.get_nodes_state(self.project_id) if node.get('state') == "IDLE"]
             while not idle_nodes:
+                logging.info("No idle nodes found, waiting for 5 seconds...")
                 sleep(5)  # 等待 5 秒後再次檢查
-                idle_nodes = [node for node in self.get_nodes_state(project_id) if node.get('state') == "IDLE"]
+                idle_nodes = [node for node in self.get_nodes_state(self.project_id) if node.get('state') == "IDLE"]
             self.execute_task([idle_nodes[0]['id']], [test_item['test_class_ids']], test_item['stop_on_failure'], test_item['times'])
-            
+
+            logging.info(f"Executed task on node {idle_nodes[0]['id']} for test class {test_item['test_class_ids']} with stop_on_failure={test_item['stop_on_failure']} and times={test_item['times']}")
 
     def execute_task(self, project_id: int,node_ids:list, test_class_ids: list,stop_on_failure:bool=False,times:int=1) -> None:
         '''
@@ -241,7 +248,12 @@ def main():
     parser = argparse.ArgumentParser(description="SVD ACE Handler CLI")
     
     parser.add_argument("-sys", "--system", required=True, help="System ID (e.g., VCT6)")
-    parser.add_argument("-pjn", "--project_name", required=True, help="Project Name (e.g., RT_ACE6600_DVT_Web_Test)")
+
+    
+    project_group = parser.add_mutually_exclusive_group(required=True)
+    project_group.add_argument("-pjn", "--project_name", help="Project Name (e.g., RT_ACE6600_DVT_Web_Test)")
+    project_group.add_argument("-pjb", "--project_number", help="Project Number (e.g., 26)")
+    
     # login related
     parser.add_argument("-c", "--config", default="./.config", help="Config file path (default: ./.config)")
     parser.add_argument("-a", "--account", help="Account name")
@@ -249,6 +261,9 @@ def main():
     # firmware uplaod related
     parser.add_argument("-pth", "--firmware_path", help="Firmware bin file path (e.g., ../ace.bin)")
     parser.add_argument("-v", "--version", help="Firmware version (optional)")
+    
+    # start testing
+    parser.add_argument("-tv", "--test_level", help="Firmware version (optional)")
     args = parser.parse_args()
 
     # 讀取 config
@@ -261,13 +276,38 @@ def main():
     account = args.account or config.get("account", "kent.peng")
     password = args.password or config.get("password", "Ff113065532")
     system_id = args.system
-    project_name = args.project_name
 
-    svd_ace_handler = SVDACEHandler(system_id=system_id, account=account, password=password)
+    project_name = args.project_name
+    project_number = args.project_number
+
+    svd_ace_handler = SVDACEHandler(system_id=system_id, account=account, password=password,project_name=args.project_name,project_number=args.project_number)
     # print(svd_ace_handler.get_nodes_state(26))  # 假設專案 ID 為 26
     if args.firmware_path:
         firmware_version = args.version or project_name + datetime.now().strftime("%Y%m%d%H%M%S")
         svd_ace_handler.smi_upload(project_name, args.firmware_path, firmware_version)
+    
+    elif args.test_level:
+
+        # test_level 決定 test_list
+        svd_ace_handler.test_parallel(
+            test_list = [
+                {
+                    'test_class_ids':8546,
+                    'times':1,
+                    'stop_on_failure':False,
+                },
+                {
+                    'test_class_ids':8548,
+                    'times':1,
+                    'stop_on_failure':False,
+                },
+                {
+                    'test_class_ids':8542,
+                    'times':1,
+                    'stop_on_failure':False,
+                }
+            ]
+        )
 if __name__ == "__main__":
     
     main()
