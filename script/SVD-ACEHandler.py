@@ -7,6 +7,7 @@ import os
 import json
 from collections import defaultdict
 from datetime import datetime
+import websocket
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 設定 logging 同時輸出到 terminal 和 log 檔案
@@ -15,21 +16,23 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),  # 輸出到 terminal
-        # logging.FileHandler("svd_ace_handler.log", encoding="utf-8")  # 輸出到檔案
+        logging.FileHandler("svd_ace_handler.log", encoding="utf-8")  # 輸出到檔案
     ]
 )
 
 
 URL_API_BASE_option = {
-            "RDLAB1":"http://10.10.139.206/ACE_NO1/rest/v1.0/",
-            "RDLAB2":"http://10.10.139.207/ACE_NO2/rest/v1.0/",
-            "RDLAB3":"http://10.10.138.6:8082/rest/v1.0/",
-            "VCT1":"http://10.10.77.200:8082/rest/v1.0/",
-            "VCT2":"http://10.10.77.201:8082/rest/v1.0/",
-            "VCT3":"http://10.10.77.202:8082/rest/v1.0/",
-            "VCT4":"http://10.10.77.203:8082/rest/v1.0/",
-            "VCT5":"http://10.10.77.204:8082/rest/v1.0/",
+            "RDLAB1":"http://10.8.117.241/ACE_NO1",
+            #"RDLAB2":"http://10.10.139.207/ACE_NO2/rest/v1.0/",
+            "RDLAB3":"https://aceno3.siliconmotion.com.tw",
+            "VCT1":"https://svdno1.siliconmotion.com.tw",
+            "VCT2":"https://svdno2.siliconmotion.com.tw",
+            "VCT3":"https://svdno3.siliconmotion.com.tw",
+            "VCT4":"https://svdno4.siliconmotion.com.tw",
+            "VCT5":"https://svdno5.siliconmotion.com.tw",
             "VCT6":"https://svdno6.siliconmotion.com.tw",
+            "VCT10":"https://svdno10.siliconmotion.com.tw",
+            "VCT11":"https://svdno11.siliconmotion.com.tw",
         }
 
 URL_REPORT_SERVER = "http://ace-report.siliconmotion.com.tw:8080//dev_micky"
@@ -54,18 +57,35 @@ class SVDACEHandler:
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"'
         }
-        self._login(account,password)
-        
+        self._reflash_cookies(account,password)
+        # if you pass project_name it will translate to  project_id from micky report server
         self.project_id = kwargs.get('project_id', next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None))  # 預設專案 ID 為 26
-        # update sql
+        
+        
+        #websocket 
+
+        self.ws_url = f"wss://{self.url_api_base}/stomp/459/uy2oozuv/websocket"
+        self.ws = websocket.WebSocketApp(
+            self.ws_url,
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close,
+            header=[
+                "Origin: https://svdno6.siliconmotion.com.tw",
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0",
+                # 你可以加上 Cookie 等 header
+                f"Cookie: {"; ".join(["{k}={v}" for k, v in self.session.cookies.get_dict().items()])}"
+            ]
+        )
 
 
-
-
-    def _login(self,account,password)-> None:
+    def _reflash_cookies(self,account,password)-> None:
         """
-        登入SVD ACE系統
-        let the session object have vaild connected cookies
+        follow the web SVD ACE login process and let the session object have vaild cookies
+        Args:
+            account (str): SSO account
+            password (str): SSO password
         """
 
         payload = {
@@ -87,15 +107,96 @@ class SVDACEHandler:
                 allow_redirects=True,
                 verify=False
             )
+            # print(login_response.text)
         except requests.exceptions.RequestException as e:
             logging.error(f"An error occurred during login: {e}")
             return
 
 
-    def node_reboot(self, project_id: int, node_id: int):
-        node_reboot(project_id, node_id)
 
-    def get_nodes_state(self, project_id: int) -> list:
+    def node_command(self, node_id: int, command: str) -> bool:
+        '''
+        order node to execute command
+        Args:   
+            node_id (int): node id
+            command (str): shell command for example "init" , "interrupt" or any other command which could be executed on the node terminal
+        Returns:
+            bool: True if command executed successfully, False otherwise
+        '''
+    
+        # do reboot
+       
+        if self.query_nodes_state(node_id) == "IDLE":
+            payload = {
+                'command': command + "\n",
+            }
+            try: 
+                command_response = self.session.post(
+                    f"{self.url_api_base}/home/nodes/{node_id}/commands",
+                    json=payload,
+                    headers=self.headers,
+                    verify=False
+                )
+                print(command_response.json())
+                if command_response.json().get("success") != True:
+                    raise Exception(f"Failed to execute {command} on node {node_id}")
+                else :
+                    logging.info(f"Node {node_id} command executed successfully: {command}")
+
+            except requests.exceptions.RequestException as e:
+                logging.error(f"An error occurred while execute node command: {e}")
+                return fa
+            except Exception as e:
+                logging.error(f"An error occurred while executing command on node {node_id}: {e}")
+                return
+            finally:
+                while self.query_nodes_state(node_id) == "RUNNING":
+                    logging.info(f"Node {node_id} is still running, waiting for it to become IDLE...")
+                    sleep(1)
+                if self.get_nodes_info(node_id).get("failCount") == 0 :
+                    print(self.get_nodes_info(node_id))
+                    logging.info(f"Node {node_id} is now IDLE, command {command} executed successfully.")
+                else:
+                    logging.error(f"Node {node_id} is now IDLE, but it has failed {self.get_nodes_info(node_id).get('failCount')} times, please check the node status.")
+        
+        elif self.query_nodes_state(node_id) == "RUNNING" and command == "interrupt":
+            self.headers["Content-Type"] = "application/json"
+            self.headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
+            logging.info(f"Node {node_id} is in RUNNING state, trying to interrupt it...")
+            try: 
+                # do reboot
+                payload = {
+                    'action': "FORCE_99", 
+                    'code': ""
+                }
+                
+                # 登入後存取首頁
+                
+                reboot_response = self.session.post(
+                    f"{self.url_api_base}/home/nodes/{node_id}/actions",
+                    json=payload,
+                    headers=self.headers,
+                    verify=False
+                )
+
+                sleep(20)
+
+                # do reset controller
+                payload = {
+                    'RESET': "FORCE_99", 
+                    'code': ""
+                }
+                reset_controller = self.session.post(
+                    f"{self.url_api_base}/home/nodes/{node_id}/actions",
+                    json=payload,
+                    headers=self.headers,
+                    verify=False
+                )
+            except requests.exceptions.RequestException as e:
+                logging.error(f"An error occurred while fetching nodes: {e}")
+   
+
+    def get_nodes_info(self,node_id:int=-1) -> list:
        
         '''獲取指定專案中所有空閒的 ACE
         Args:
@@ -104,17 +205,43 @@ class SVDACEHandler:
         try: 
             # 登入後存取首頁
             jqgrid_response = self.session.post(
-                f"{self.url_api_base}/home/groups/{str(project_id)}/jqgrid.json",
+                f"{self.url_api_base}/home/groups/{str(self.project_id)}/jqgrid.json",
                 headers=self.headers,
                 verify=False
             )
+            nodes_info = jqgrid_response.json()['rows']
         except requests.exceptions.RequestException as e:
             logging.error(f"An error occurred while fetching nodes: {e}")
             return []
         
-        nodes_state = jqgrid_response.json()['rows']
+        finally:
+            
+            if node_id != -1:
+                node_info = [node_info for node_info in nodes_info if str(node_info.get("id")) == str(node_id)][0]
+                return node_info
+            else:
+                return nodes_info
+    
+    def query_nodes_state(self, node_id: int) -> str:
+        '''獲取指定專案中所有空閒的 ACE
+        Args:
+            project_id (int): 專案 ID'''
+        
+        nodes_info = self.get_nodes_info()
+        if nodes_info:
+            # 篩選出指定專案的節點
+            node_state = [node_info for node_info in nodes_info if str(node_info.get("id")) == str(node_id)][0]['state']
+            return node_state
 
-        return nodes_state
+    def query_nodes_ids(self,state:str) -> list:
+        '''
+        query all nodes ids with specific state
+
+        Args:
+            state (str): IDLE RUNNING INIT
+        '''
+        nodes_ids = [node['id'] for node in self.get_nodes_info() if node.get('state') == state]
+        return nodes_ids
 
     def test_parallel(self,test_list: list) -> None:
         '''執行指定專案中指定測試類別的測試
@@ -125,16 +252,16 @@ class SVDACEHandler:
         
         for test_item  in test_list:
             
-            idle_nodes = [node for node in self.get_nodes_state(self.project_id) if node.get('state') == "IDLE"]
-            while not idle_nodes:
+            idle_nodes_ids = self.query_nodes_ids("IDLE")
+            while not idle_nodes_ids:
                 logging.info("No idle nodes found, waiting for 5 seconds...")
                 sleep(5)  # 等待 5 秒後再次檢查
-                idle_nodes = [node for node in self.get_nodes_state(self.project_id) if node.get('state') == "IDLE"]
+                idle_nodes_ids = self.query_nodes_ids("IDLE")
 
+            self.node_command(idle_nodes_ids[0],"init\n")  # 強制重啟節點
+            self.execute_task([idle_nodes_ids[0]], [test_item['test_class_ids']], test_item['stop_on_failure'], test_item['times'])
 
-            self.execute_task([idle_nodes[0]['id']], [test_item['test_class_ids']], test_item['stop_on_failure'], test_item['times'])
-
-            logging.info(f"Executed task on node {idle_nodes[0]['id']} for test class {test_item['test_class_ids']} with stop_on_failure={test_item['stop_on_failure']} and times={test_item['times']}")
+            logging.info(f"Executed task on node {idle_nodes_ids[0]} for test class {test_item['test_class_ids']} with stop_on_failure={test_item['stop_on_failure']} and times={test_item['times']}")
 
     def execute_task(self,node_ids:list, test_class_ids: list,stop_on_failure:bool=False,times:int=1) -> None:
         '''
@@ -263,6 +390,11 @@ def main():
     
     # start testing
     parser.add_argument("-tv", "--test_level", help="Firmware version (optional)")
+
+    # node command
+    parser.add_argument("-nn", "--node_number", help="Node number (optional, for node command)")
+    parser.add_argument("-cmd", "--node_command", help="Node command (e.g., init, reboot, etc.)")
+    
     args = parser.parse_args()
 
     # 讀取 config
@@ -280,11 +412,15 @@ def main():
     project_number = args.project_number
 
     svd_ace_handler = SVDACEHandler(system_id=system_id, account=account, password=password,project_name=args.project_name,project_number=args.project_number)
-    # print(svd_ace_handler.get_nodes_state(26))  # 假設專案 ID 為 26
+    
     if args.firmware_path:
         firmware_version = args.version or project_name + datetime.now().strftime("%Y%m%d%H%M%S")
         svd_ace_handler.smi_upload(project_name, args.firmware_path, firmware_version)
-    
+    elif args.node_number and args.node_command:
+        # 執行節點命令
+        node_number = int(args.node_number)
+        command = args.node_command
+        svd_ace_handler.node_command(node_number, command)
     elif args.test_level:
 
         # test_level 決定 test_list
