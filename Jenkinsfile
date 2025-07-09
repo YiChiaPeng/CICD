@@ -4,7 +4,7 @@ pipeline {
     environment {
         UFS_BIN_FILE = 'ace6.bin'
       
-        PYTHON = 'python' // 如果你用的是 Windows 或 pyenv，這裡可以改成 python
+        PYTHON = 'C:/Users/kent.peng/AppData/Local/Microsoft/WindowsApps/python3.9.exe' // 如果你用的是 Windows 或 pyenv，這裡可以改成 python
     }
 
     stages {
