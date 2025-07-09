@@ -62,22 +62,22 @@ class SVDACEHandler:
         self.project_id = kwargs.get('project_id', next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None))  # 預設專案 ID 為 26
         
         
-        #websocket 
+        # #websocket 
 
-        self.ws_url = f"wss://{self.url_api_base}/stomp/459/uy2oozuv/websocket"
-        self.ws = websocket.WebSocketApp(
-            self.ws_url,
-            on_open=on_open,
-            on_message=on_message,
-            on_error=on_error,
-            on_close=on_close,
-            header=[
-                "Origin: https://svdno6.siliconmotion.com.tw",
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0",
-                # 你可以加上 Cookie 等 header
-                f"Cookie: {"; ".join(["{k}={v}" for k, v in self.session.cookies.get_dict().items()])}"
-            ]
-        )
+        # self.ws_url = f"wss://{self.url_api_base}/stomp/459/uy2oozuv/websocket"
+        # self.ws = websocket.WebSocketApp(
+        #     self.ws_url,
+        #     on_open=on_open,
+        #     on_message=on_message,
+        #     on_error=on_error,
+        #     on_close=on_close,
+        #     header=[
+        #         "Origin: https://svdno6.siliconmotion.com.tw",
+        #         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0",
+        #         # 你可以加上 Cookie 等 header
+        #         f"Cookie: {"; ".join(["{k}={v}" for k, v in self.session.cookies.get_dict().items()])}"
+        #     ]
+        # )
 
 
     def _reflash_cookies(self,account,password)-> None:
@@ -243,6 +243,10 @@ class SVDACEHandler:
         nodes_ids = [node['id'] for node in self.get_nodes_info() if node.get('state') == state]
         return nodes_ids
 
+
+    ###
+
+
     def test_parallel(self,test_list: list) -> None:
         '''執行指定專案中指定測試類別的測試
         Args:
@@ -357,16 +361,6 @@ class SVDACEHandler:
         
         response = self.session.get(url, params=params, headers=self.headers)
         return response.json()
-
-
-        project_name_to_systemid = defaultdict(list)
-        for item in response.json():
-            project_name_to_systemid[item['projectName']].append({
-                "system_id": item['systemid'],
-                "project_id": item.get('projectId') or item.get('project_id')
-            })
-        
-        return project_name_to_systemid
 
     
 

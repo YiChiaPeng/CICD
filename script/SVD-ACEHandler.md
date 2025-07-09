@@ -1,6 +1,25 @@
-# simple tourtol
+# SVD-ACE Handler 
 
-## how to use
+
+SVD-ACE Handler is a cmd tool and also a python class,which had define a object oriented  method to manipulate the SMI SVD testing platform by using web like post get method in computer network.  
+
+
+
+
+## how to setup 
+
+### requirement 
+1. a python env
+
+
+```sh 
+pip install -r requirements.txt
+```
+
+## how to used 
+
+
+
 
 ## how to achieve
 
