@@ -145,10 +145,10 @@ class SVDACEHandler:
 
             except requests.exceptions.RequestException as e:
                 logging.error(f"An error occurred while execute node command: {e}")
-                return fa
+                return False
             except Exception as e:
                 logging.error(f"An error occurred while executing command on node {node_id}: {e}")
-                return
+                return False
             finally:
                 while self.query_nodes_state(node_id) == "RUNNING":
                     logging.info(f"Node {node_id} is still running, waiting for it to become IDLE...")
