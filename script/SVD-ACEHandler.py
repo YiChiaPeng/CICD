@@ -1,26 +1,35 @@
 import requests
 import logging
 import urllib3
-from time import sleep
+from time import sleep,time
 import argparse
 import os
 import json
 from collections import defaultdict
 from datetime import datetime
-import websocket
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Union, List
+import csv
+import threading
+from queue import Queue, Empty
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-# 設定 logging 同時輸出到 terminal 和 log 檔案
+# setup logging output to both  terminal and log file
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.StreamHandler(),  # 輸出到 terminal
-        logging.FileHandler("svd_ace_handler.log", encoding="utf-8")  # 輸出到檔案
+        logging.StreamHandler(),  # output to terminal
+        logging.FileHandler("svd_ace_handler.log", encoding="utf-8")  # output to logfile
     ]
 )
 
 
+CSV_LOCK = threading.Lock()
+CSV_LOG_PATH = "svd_ace_handler_result.csv"
+
+# 3 days
+DEFAULT_THRESHOLD = 3*24*60*60
 URL_API_BASE_option = {
             "RDLAB1":"http://10.8.117.241/ACE_NO1",
             #"RDLAB2":"http://10.10.139.207/ACE_NO2/rest/v1.0/",
@@ -45,6 +54,7 @@ class SVDACEHandler:
         self.session = requests.Session()
         self.system_id = system_id
         self.account = account
+        # if there has some error during decode the server url , use  VCT6 .
         self.url_api_base = URL_API_BASE_option.get(self.system_id, "https://svdno6.siliconmotion.com.tw")
         
         
@@ -60,24 +70,7 @@ class SVDACEHandler:
         self._reflash_cookies(account,password)
         # if you pass project_name it will translate to  project_id from micky report server
         self.project_id = kwargs.get('project_id', next((item['projectId'] for item in self.get_projects() if item['projectName'] == kwargs.get('project_name') and item['systemid'] == system_id), None))  # 預設專案 ID 為 26
-        
-        
-        # #websocket 
-
-        # self.ws_url = f"wss://{self.url_api_base}/stomp/459/uy2oozuv/websocket"
-        # self.ws = websocket.WebSocketApp(
-        #     self.ws_url,
-        #     on_open=on_open,
-        #     on_message=on_message,
-        #     on_error=on_error,
-        #     on_close=on_close,
-        #     header=[
-        #         "Origin: https://svdno6.siliconmotion.com.tw",
-        #         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0",
-        #         # 你可以加上 Cookie 等 header
-        #         f"Cookie: {"; ".join(["{k}={v}" for k, v in self.session.cookies.get_dict().items()])}"
-        #     ]
-        # )
+    
 
 
     def _reflash_cookies(self,account,password)-> None:
@@ -100,16 +93,15 @@ class SVDACEHandler:
 
         try:
 
-            login_response = self.session.post(
+            reflash_cookies_response = self.session.post(
                 f"{self.url_api_base}/login",
                 data=payload,
                 headers=self.headers,
                 allow_redirects=True,
                 verify=False
             )
-            # print(login_response.text)
         except requests.exceptions.RequestException as e:
-            logging.error(f"An error occurred during login: {e}")
+            logging.error(f"An error occurred during reflash cookies: {e}")
             return
 
 
@@ -124,7 +116,7 @@ class SVDACEHandler:
             bool: True if command executed successfully, False otherwise
         '''
     
-        # do reboot
+        # this logic might refine
        
         if self.query_nodes_state(node_id) == "IDLE":
             payload = {
@@ -137,11 +129,10 @@ class SVDACEHandler:
                     headers=self.headers,
                     verify=False
                 )
-                print(command_response.json())
                 if command_response.json().get("success") != True:
-                    raise Exception(f"Failed to execute {command} on node {node_id}")
+                    raise Exception(f"Failed to send out {command} on node {node_id}")
                 else :
-                    logging.info(f"Node {node_id} command executed successfully: {command}")
+                    logging.debug(f"Node {node_id} command executed successfully: {command}")
 
             except requests.exceptions.RequestException as e:
                 logging.error(f"An error occurred while execute node command: {e}")
@@ -151,11 +142,10 @@ class SVDACEHandler:
                 return False
             finally:
                 while self.query_nodes_state(node_id) == "RUNNING":
-                    logging.info(f"Node {node_id} is still running, waiting for it to become IDLE...")
+                    logging.debug(f"Node {node_id} is still running, waiting for finished job ...")
                     sleep(1)
-                if self.get_nodes_info(node_id).get("failCount") == 0 :
-                    print(self.get_nodes_info(node_id))
-                    logging.info(f"Node {node_id} is now IDLE, command {command} executed successfully.")
+                if int(self.get_nodes_info(node_id).get("failCount")) == 0 :
+                    logging.info(f"Command {command} executed successfully at Node {node_id}.")
                 else:
                     logging.error(f"Node {node_id} is now IDLE, but it has failed {self.get_nodes_info(node_id).get('failCount')} times, please check the node status.")
         
@@ -169,8 +159,6 @@ class SVDACEHandler:
                     'action': "FORCE_99", 
                     'code': ""
                 }
-                
-                # 登入後存取首頁
                 
                 reboot_response = self.session.post(
                     f"{self.url_api_base}/home/nodes/{node_id}/actions",
@@ -198,9 +186,11 @@ class SVDACEHandler:
 
     def get_nodes_info(self,node_id:int=-1) -> list:
        
-        '''獲取指定專案中所有空閒的 ACE
-        Args:
-            project_id (int): 專案 ID'''
+        '''
+            get certain or all node detail information 
+        Arg: 
+            node_id (int): node id
+        '''
         
         try: 
             # 登入後存取首頁
@@ -215,17 +205,19 @@ class SVDACEHandler:
             return []
         
         finally:
-            
             if node_id != -1:
                 node_info = [node_info for node_info in nodes_info if str(node_info.get("id")) == str(node_id)][0]
                 return node_info
             else:
                 return nodes_info
-    
+        
+
+    # this part is base on get_nodes_info , extract the different attribute .
+
     def query_nodes_state(self, node_id: int) -> str:
-        '''獲取指定專案中所有空閒的 ACE
-        Args:
-            project_id (int): 專案 ID'''
+        ''' get certain or all node detail information 
+        Arg: 
+            node_id (int): node id'''
         
         nodes_info = self.get_nodes_info()
         if nodes_info:
@@ -244,55 +236,130 @@ class SVDACEHandler:
         return nodes_ids
 
 
-    ###
+    ################################################
+    #working function 
+    ################################################
+    def thread_job(self,node_queue:Queue,test_item:json)->bool:
+        '''
+            It is uesd to
+
+        '''
+        global DEFAULT_THRESHOLD
+        global CSV_LOCK
+        try:
+            node_id = node_queue.get(timeout=DEFAULT_THRESHOLD)  # 最多等 60 秒
+        except Empty:
+            logging.error("No idle node available for test_item.")
+            return False
+        self.node_command(node_id, "init")
+
+        try :
+            start_time = time()
+            self.execute_task(
+                node_id,
+                test_item['test_class_ids'],                 
+                test_item['stop_on_failure'],
+                test_item['times']
+            )
+            #calculate the execute time on the  node_id machine
+            #busy wating until thread finish 
+            while self.query_nodes_state(node_id=node_id) == "RUNNING":
+                sleep(1)
+                #time out halt the node
+                if(time()-start_time > test_item.get("threshold",DEFAULT_THRESHOLD)):
+                    self.node_command(node_id=node_id,command="interrupt")
+                    logging.error(f"Executed task on node {node_id} for test class {test_item['test_class_ids']} in {self.system_id} took {time()-start_time:.3} seconds and it is overtime the threshold is {DEFAULT_THRESHOLD}")
+                    return False
+            if self.query_nodes_state(node_id=node_id) == "IDLE":
+                # 寫入 CSV
+                took_time = time()-start_time
+                with CSV_LOCK:
+                    write_header = not os.path.exists(CSV_LOG_PATH)
+                    with open(CSV_LOG_PATH, "a", newline='', encoding="utf-8") as csvfile:
+                        writer = csv.writer(csvfile)
+                        if write_header:
+                            writer.writerow(["system_id", "node_id", "test_class_id", "took_time"])
+                        writer.writerow([self.system_id, node_id, test_item['test_class_ids'], took_time])
+                logging.info(f"Executed task on node {node_id} for test class {test_item['test_class_ids']} in {self.system_id} took {took_time:.3} seconds and the pass count is {int(self.get_nodes_info(node_id).get('passCount'))} , the fail count is {int(self.get_nodes_info(node_id).get('failCount'))},the warn count is {int(self.get_nodes_info(node_id).get('warnCount'))}")
+                
+                return True
+            else :
+                return False
+        finally:
+            node_queue.put(node_id)  # 任務結束，node 放回 queue
 
 
     def test_parallel(self,test_list: list) -> None:
-        '''執行指定專案中指定測試類別的測試
+        '''start the test scheduler 
         Args:
-            test_class_ids (list): 測試類別 ID 列表
+            test_class (list): 測試類別 ID 列表
         '''
-        print(len(test_list))
+        logging.debug(f"total has {len(test_list)} test item ")
+
+        idle_nodes_ids = self.query_nodes_ids("IDLE")
+        if not idle_nodes_ids:
+            logging.error("No idle nodes available at start.")
+            return
+
+        node_queue = Queue()
+        for node_id in idle_nodes_ids:
+            node_queue.put(node_id)
+
+
+
+
+        with ThreadPoolExecutor(max_workers=len(test_list)) as executor:
         
-        for test_item  in test_list:
+            futures = [executor.submit(self.thread_job,node_queue,test_item) for test_item in test_list]
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Error in executing test: {e}")
+        
+    def execute_task(
+        self,
+        node_ids: Union[int, List[int]],
+        test_class_ids: Union[int, List[int]],
+        stop_on_failure: bool = False,
+        times: int = 1
+    ) -> None:
+        '''This function is based on website POST method working as a unit execute job method.
+
+        Args:
+            node_ids: node id(s) to execute task. Can be a single int or list of ints.
+            test_class_ids: test class id(s) to execute task. Can be a single int or list of ints.
+            stop_on_failure: if True, stop the task on failure.
+            times: number of times to execute the task.
             
-            idle_nodes_ids = self.query_nodes_ids("IDLE")
-            while not idle_nodes_ids:
-                logging.info("No idle nodes found, waiting for 5 seconds...")
-                sleep(5)  # 等待 5 秒後再次檢查
-                idle_nodes_ids = self.query_nodes_ids("IDLE")
-
-            self.node_command(idle_nodes_ids[0],"init\n")  # 強制重啟節點
-            self.execute_task([idle_nodes_ids[0]], [test_item['test_class_ids']], test_item['stop_on_failure'], test_item['times'])
-
-            logging.info(f"Executed task on node {idle_nodes_ids[0]} for test class {test_item['test_class_ids']} with stop_on_failure={test_item['stop_on_failure']} and times={test_item['times']}")
-
-    def execute_task(self,node_ids:list, test_class_ids: list,stop_on_failure:bool=False,times:int=1) -> None:
         '''
-        node_ids: list of node ids to execute task
-        test_class_ids: list of test class ids to execute task
-        stop_on_failure: if True, stop the task on failure      
-        times: number of times to execute the task
-        '''
-        
+
+        # Normalize to lists
+        if isinstance(node_ids, int):
+            node_ids = [node_ids]
+        if isinstance(test_class_ids, int):
+            test_class_ids = [test_class_ids]
+
         payload = {
             "nodeIds": ",".join(str(node_id) for node_id in node_ids),
             "recurrenceType": "1",
-            "stopOnFailure":stop_on_failure,
+            "stopOnFailure": stop_on_failure,
             "testClassIds": ",".join(str(test_class_id) for test_class_id in test_class_ids),
             "times": times
         }
+
         self.headers["Content-Type"] = "application/json"
         self.headers["Referer"] = f"{self.url_api_base}/home/groups/{self.project_id}"
         self.headers["X-Requested-With"] = "XMLHttpRequest"
-       
+
         try:
             response = self.session.post(
                 f"{self.url_api_base}/home/tasks",
                 json=payload,
                 headers=self.headers,
                 allow_redirects=True,
-                verify=False  # <--- 加這一行
+                verify=False
             )
         except requests.exceptions.RequestException as e:
             logging.error(f"An error occurred while executing task: {e}")
@@ -411,10 +478,8 @@ def main():
         firmware_version = args.version or project_name + datetime.now().strftime("%Y%m%d%H%M%S")
         svd_ace_handler.smi_upload(project_name, args.firmware_path, firmware_version)
     elif args.node_number and args.node_command:
-        # 執行節點命令
-        node_number = int(args.node_number)
-        command = args.node_command
-        svd_ace_handler.node_command(node_number, command)
+        # execute node command
+        svd_ace_handler.node_command(int(args.node_number), args.node_command)
     elif args.test_level:
 
         # test_level 決定 test_list
@@ -424,6 +489,7 @@ def main():
                     'test_class_ids':8546,
                     'times':1,
                     'stop_on_failure':False,
+                    'threshold':600
                 },
                 {
                     'test_class_ids':8548,
