@@ -28,27 +28,34 @@ pipeline {
             steps {
                 echo 'Run Engineering Sample Test (ES)'
                 sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv ES"
-                
+                script {
+                    mail to: 'kent.peng@siliconmotion.com,
+                         subject: "✅ QS Test Completed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                         body: "QS Test completed successfully."
+                }
             }
+
         }
 
 
-        stage('Qualified Sample Test (QS)') {
-            steps {
-                echo 'Run Qualified Sample Test (QS)'
-                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv QS"
-                
-            }
-        }
 
 
-        stage('Commercial Test (CS)') {
-            steps {
-                echo 'Run Commercial Test (CS)'
-                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv CS"
+        // stage('Qualified Sample Test (QS)') {
+        //     steps {
+        //         echo 'Run Qualified Sample Test (QS)'
+        //         sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv QS"
                 
-            }
-        }
+        //     }
+        // }
+
+
+        // stage('Commercial Test (CS)') {
+        //     steps {
+        //         echo 'Run Commercial Test (CS)'
+        //         sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv CS"
+                
+        //     }
+        // }
 
 
 

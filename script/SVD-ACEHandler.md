@@ -5,8 +5,8 @@ SVD-ACE Handler is a cmd tool and also a python class,which had define a object 
 
 
 It is used by Jenkins as a python now , but it can be execute by other program or job scheduler .
-
-## how to setup 
+## setup & execute
+### how to setup 
 
 ### requirement 
 a python(I use python3.8) env
@@ -16,7 +16,7 @@ a python(I use python3.8) env
 pip install -r requirements.txt
 ```
 
-## how to used 
+### how to used 
 
 ```sh 
 usage: SVD-ACEHandler.py [-h] -sys SYSTEM (-pjn PROJECT_NAME | -pjb PROJECT_NUMBER) [-c CONFIG] [-a ACCOUNT] [-p PASSWORD]
@@ -53,9 +53,9 @@ optional arguments:
 
 
 
-## some note
+## how to fullfull
 
-
+### reflash_cookies
 ``` py
 class SVDACEHandler:
     def __init__():
@@ -70,11 +70,32 @@ To acess the SMI SVD test system via API , using session object(keep the vaild c
 
 
 
+```python 
+ def _reflash_cookies(self,account,password)-> None:
+        """
+        follow the web SVD ACE login process and let the session object have vaild cookies
+        Args:
+            account (str): SSO account
+            password (str): SSO password
+        """
+```
+> mainly do reflash this cookies by which ace platform 
+###
+
+``` python 
+def node_command(self, node_id: int, command: str) -> bool:
+        '''
+        order node to execute command
+        Args:   
+            node_id (int): node id
+            command (str): shell command for example "init" , "interrupt" or any other command which could be executed on the node terminal
+        Returns:
+            bool: True if command executed successfully, False otherwise
+        '''
+```
 ### function describition
 
 ####  
-mainly do reflash this cookies by which ace platform 
-
 
 #### 
 

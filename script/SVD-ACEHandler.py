@@ -142,12 +142,12 @@ class SVDACEHandler:
                 return False
             finally:
                 while self.query_nodes_state(node_id) == "RUNNING":
-                    logging.debug(f"Node {node_id} is still running, waiting for finished job ...")
+                    logging.debug(f"Node {self.get_nodes_info(node_id).get('name')} is still running, waiting for finished job ...")
                     sleep(1)
                 if int(self.get_nodes_info(node_id).get("failCount")) == 0 :
-                    logging.info(f"Command {command} executed successfully at Node {node_id}.")
+                    logging.info(f"Command {command} executed successfully at Node {self.get_nodes_info(node_id).get('name')}.")
                 else:
-                    logging.error(f"Node {node_id} is now IDLE, but it has failed {self.get_nodes_info(node_id).get('failCount')} times, please check the node status.")
+                    logging.error(f"Node {self.get_nodes_info(node_id).get('name')} is now IDLE, but it has failed {self.get_nodes_info(node_id).get('failCount')} times, please check the node status.")
         
         elif self.query_nodes_state(node_id) == "RUNNING" and command == "interrupt":
             self.headers["Content-Type"] = "application/json"
@@ -244,6 +244,7 @@ class SVDACEHandler:
             It is uesd to
 
         '''
+        
         global DEFAULT_THRESHOLD
         global CSV_LOCK
         try:
@@ -257,36 +258,38 @@ class SVDACEHandler:
             start_time = time()
             self.execute_task(
                 node_id,
-                test_item['test_class_ids'],                 
-                test_item['stop_on_failure'],
-                test_item['times']
+                test_item.get('id'),                 
+                test_item.get('stop_on_failure',False),
+                test_item.get('times',1)
             )
+            print(test_item)
             #calculate the execute time on the  node_id machine
             #busy wating until thread finish 
             while self.query_nodes_state(node_id=node_id) == "RUNNING":
                 sleep(1)
-                #time out halt the node
-                if(time()-start_time > test_item.get("threshold",DEFAULT_THRESHOLD)):
+                # Timeout: stop the node if it runs too long
+                # The threshold is in minutes
+                if(time()-start_time > (test_item.get("threshold",DEFAULT_THRESHOLD))):
                     self.node_command(node_id=node_id,command="interrupt")
-                    logging.error(f"Executed task on node {node_id} for test class {test_item['test_class_ids']} in {self.system_id} took {time()-start_time:.3} seconds and it is overtime the threshold is {DEFAULT_THRESHOLD}")
+                    logging.error(f"Executed task on node {self.get_nodes_info(node_id).get('name')} for test class {test_item.get('name')} in {self.system_id} took {time()-start_time:.3} seconds and it is overtime the threshold is {DEFAULT_THRESHOLD}")
                     return False
+            # if finish the  
             if self.query_nodes_state(node_id=node_id) == "IDLE":
-                # 寫入 CSV
-                took_time = time()-start_time
+                # write to csv 
+                duration = time()-start_time
                 with CSV_LOCK:
                     write_header = not os.path.exists(CSV_LOG_PATH)
                     with open(CSV_LOG_PATH, "a", newline='', encoding="utf-8") as csvfile:
                         writer = csv.writer(csvfile)
                         if write_header:
-                            writer.writerow(["system_id", "node_id", "test_class_id", "took_time"])
-                        writer.writerow([self.system_id, node_id, test_item['test_class_ids'], took_time])
-                logging.info(f"Executed task on node {node_id} for test class {test_item['test_class_ids']} in {self.system_id} took {took_time:.3} seconds and the pass count is {int(self.get_nodes_info(node_id).get('passCount'))} , the fail count is {int(self.get_nodes_info(node_id).get('failCount'))},the warn count is {int(self.get_nodes_info(node_id).get('warnCount'))}")
-                
+                            writer.writerow(["system_id", "node_id", "test_script", "duration"])
+                        writer.writerow([self.system_id, node_id, test_item.get('name'), duration])
+                logging.info(f"Executed task on node {self.get_nodes_info(node_id).get('name')} for test class {test_item.get('name')} in {self.system_id} Duration: {duration:.3} seconds. Pass count: {int(self.get_nodes_info(node_id).get('passCount'))} ,Fail count: {int(self.get_nodes_info(node_id).get('failCount'))} ,Warn count: {int(self.get_nodes_info(node_id).get('warnCount'))}")
                 return True
             else :
                 return False
         finally:
-            node_queue.put(node_id)  # 任務結束，node 放回 queue
+            node_queue.put(node_id)  # finish thread job ,node put back to queue.
 
 
     def test_parallel(self,test_list: list) -> None:
@@ -365,8 +368,13 @@ class SVDACEHandler:
             logging.error(f"An error occurred while executing task: {e}")
             return
 
+
+    '''
+    function which is provide by micky server 
+    '''
     def smi_upload(self, project_name: str, ufs_firmware_file_path: str,ufs_firmware_verison:str) -> bool:
-        '''上傳 bin file to corressponding SMI NAS server'''
+        '''upload bin file to corressponding SMI NAS server 
+        '''
     
         
         url = f"{URL_REPORT_SERVER}/smiupload"
@@ -400,34 +408,25 @@ class SVDACEHandler:
 
     
     def get_projects(self) -> list:
-        '''獲取所有專案
-        <option value = "RDLAB3"selected>RDLAB_ACE5</option>
-                        <option value = "RDLAB1">RDLAB_ACE3</option>
-                        <option value = "VCT1">VCT_01</option>
-                        <option value = "VCT2">VCT_02</option>
-                        <option value = "VCT3">VCT_03</option>
-                        <option value = "VCT4">VCT_04</option>
-                        <option value = "VCT5">VCT_05</option>
-                        <option value = "VCT6">VCT_06</option>
-                        <option value = "VCT7">VCT_07</option>
-                        <option value = "VCT10">VCT_10</option>
-                        <option value = "VCT11">VCT_11</option>
+        '''lookup the hole project system_id and  project_name from database  
         '''
 
         
         global URL_REPORT_SERVER
         url = f"{URL_REPORT_SERVER}/smimongodb"
+
         params = {
             "collection": "ProjectManagementDataBase",
             #"json":str({'enable':'YES','systemid':system_id}),  # 換成你要查的 systemid
             "json":str({'enable':'YES'}),
             "field": "{'systemid':1, 'projectId':1,'projectName':1, '_id':0}"
         }
-
         self.headers['Content-Type'] = "application/json;charset=UTF-8"
         
-        response = self.session.get(url, params=params, headers=self.headers)
-        return response.json()
+        try :    
+            response = self.session.get(url, params=params, headers=self.headers)
+        finally:
+            return response.json()
 
     
 
@@ -458,13 +457,13 @@ def main():
     
     args = parser.parse_args()
 
-    # 讀取 config
+    # read the config file 
     config = {}
     if os.path.exists(args.config):
         with open(args.config, "r", encoding="utf-8") as f:
             config = json.load(f)
 
-    # 優先使用命令列參數，否則用 config
+    # refer command-line arguments; otherwise, use config values
     account = args.account or config.get("account", "kent.peng")
     password = args.password or config.get("password", "Ff113065532")
     system_id = args.system
@@ -481,27 +480,325 @@ def main():
         # execute node command
         svd_ace_handler.node_command(int(args.node_number), args.node_command)
     elif args.test_level:
-
+        # 這裡加Congrats logic
         # test_level 決定 test_list
+
+        scripts =[
+            {
+                "class": "[ACE6_PowerEvaluation]",
+                "name": "ACE6_PowerEvaluation_MeasurePreInitCurrent",
+                "id": "9841",
+                "Test_time": "180"
+            },
+            {
+                "class": "[ACE6_PowerEvaluation]",
+                "name": "ACE6_PowerEvaluation_UFS_Dynamic_Current_HSG4B",
+                "id": "9842",
+                "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Dynamic_Current_HSG4B_32QD",
+            "id": "10569",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Dynamic_Current_HSG5A",
+            "id": "9843",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Dynamic_Current_HSG5B",
+            "id": "10043",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Static_Current_G1AG3B",
+            "id": "10195",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Static_Current_G1BG4B",
+            "id": "10570",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrentWB_ICCQ2_HSG5B",
+            "id": "9840",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrentWB_ICCQ_HSG5B",
+            "id": "9839",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrentWB_ICC_HSG5B",
+            "id": "9838",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrent_ICCQ2_HSG5B",
+            "id": "9837",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrent_ICCQ_HSG5B",
+            "id": "9836",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_ACE6_UFS_ThermalCurrent_ICC_HSG5B",
+            "id": "9835",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Static_Current_G1AG4A",
+            "id": "9844",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Static_Current_G1AG5A",
+            "id": "9845",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_PowerEvaluation]",
+            "name": "ACE6_PowerEvaluation_UFS_Static_Current_G1BG5B",
+            "id": "10044",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_H8Latency]",
+            "name": "ACE6_H8Latency_UFS_H8CMDLatency_AutoH8",
+            "id": "9808",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_H8Latency]",
+            "name": "ACE6_H8Latency_UFS_H8CMDLatency_AutoH8_HSG3",
+            "id": "9809",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_H8Latency]",
+            "name": "ACE6_H8Latency_UFS_H8CMDLatency_AutoH8_HSG5",
+            "id": "9972",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_IOLatency]",
+            "name": "ACE6_IOLatency_SCSI_IOLatency_HSG5B",
+            "id": "10273",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_ACE6Perf_Thermal_UFS22",
+            "id": "9815",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_ACE6_KIC_MixChunkMixQD_HSG5B",
+            "id": "10553",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_CMT_Sustain_PRD",
+            "id": "9816",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_CMT_Sustain_PRD_32QD",
+            "id": "10568",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_16Q",
+            "id": "9825",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_1Q",
+            "id": "9817",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_2Q",
+            "id": "9818",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_32Q",
+            "id": "9826",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_4Q",
+            "id": "9819",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_6Q",
+            "id": "9820",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_7Q",
+            "id": "9821",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_8Q",
+            "id": "9822",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_HPB_DifferentIO_Performance_9Q",
+            "id": "9823",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_IHZ_SustainPerf_WB_HSG5B",
+            "id": "10554",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronConditionWB_onelane_HSG4",
+            "id": "10166",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronConditionWB_onelane_HSG5B",
+            "id": "10177",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronConditionWB_twolane_HSG4",
+            "id": "10167",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronConditionWB_twolane_HSG5B",
+            "id": "10178",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronCondition_onelane_HSG4A",
+            "id": "10164",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronCondition_onelane_HSG5B",
+            "id": "10179",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronCondition_twolane_HSG4A",
+            "id": "10165",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MicronCondition_twolane_HSG5B",
+            "id": "10180",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixChunkMixQD",
+            "id": "8084",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixChunkMixQDCondition_HSG5B",
+            "id": "10557",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixChunkMixQDCondition_HSG5B_32QD",
+            "id": "10566",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixChunkMixQDCondition_WB_HSG5B",
+            "id": "10558",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixChunkMixQDCondition_WB_HSG5B_32QD",
+            "id": "10567",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixHPBWR_Perf",
+            "id": "9904",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixHPBWR_Perf_32G",
+            "id": "9906",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixHPBWR_Perf_32G_HSG5B",
+            "id": "10077",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixHPBWR_Perf_8G",
+            "id": "9905",
+            "Test_time": "180"
+            },
+            {
+            "class": "[ACE6_Performance]",
+            "name": "ACE6_Performance_MixHPBWR_Perf_8G_HSG5B",
+            "id": "10076",
+            "Test_time": "180"
+            }
+        ]
         svd_ace_handler.test_parallel(
-            test_list = [
-                {
-                    'test_class_ids':8546,
-                    'times':1,
-                    'stop_on_failure':False,
-                    'threshold':600
-                },
-                {
-                    'test_class_ids':8548,
-                    'times':1,
-                    'stop_on_failure':False,
-                },
-                {
-                    'test_class_ids':8542,
-                    'times':1,
-                    'stop_on_failure':False,
-                }
-            ]
+            test_list=scripts
         )
 if __name__ == "__main__":
     
