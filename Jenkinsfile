@@ -29,9 +29,9 @@ pipeline {
                 echo 'Run Engineering Sample Test (ES)'
                 sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv ES"
                 script {
-                    mail to: 'kent.peng@siliconmotion.com,
-                         subject: "✅ QS Test Completed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                         body: "QS Test completed successfully."
+                    mail to: 'kent.peng@siliconmotion.com',
+                        subject: "✅ QS Test Completed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: "QS Test completed successfully."
                 }
             }
 
