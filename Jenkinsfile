@@ -25,17 +25,65 @@ pipeline {
         
 
         stage('Engineering Sample Test (ES)') {
-            steps {
-                echo 'Run Engineering Sample Test (ES)'
-                sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv ES"
-                script {
-                    mail to: 'kent.peng@siliconmotion.com',
-                        subject: "✅ QS Test Completed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                        body: "QS Test completed successfully."
-                }
-            }
 
+            parallel {
+                stage('Main Job'){
+                    steps {
+                        echo 'Run Engineering Sample Test (ES)'
+                        sh "${PYTHON} ./script/SVD-ACEHandler.py -sys VCT6 -pjn ${env.JOB_NAME} -tv ES"
+                    }
+                }
+                
+                stage("Sending Email"){
+                    
+                    steps {
+                        script {
+
+                            def totalHours = 0
+                            def startTime = new Date().format("yyyy-MM-dd HH:mm:ss")
+                            while (totalHours < 72) {
+                                
+                                def htmlBody = """
+                                <html>
+                                <body>
+                                <h3>📋 SVD ACE6 測試報告</h3>
+                                <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
+                                <tr><th>項目</th><th>內容</th></tr>
+                                <tr><td>Platform</td><td>ACE6 (@SVD_Lab)</td></tr>
+                                <tr><td>SVD Lab ACE6 Project</td><td>RT_ACE6600_DVT_Web_Test</td></tr>
+                                <tr><td>SVD Lab ACE6 Project IP</td><td><a href="https://svdno6.siliconmotion.com.tw/home/groups/26">連結</a></td></tr>
+                                <tr><td>SVD Lab ACE6 u-boot</td><td>Congrats提供</td></tr>
+                                <tr><td>FW version</td><td>Congrats提供</td></tr>
+                                <tr><td>Sample</td><td>Congrats提供</td></tr>
+                                <tr><td>MP method</td><td>Congrats提供</td></tr>
+                                <tr><td>Start Time</td><td>${startTime}</td></tr>
+                                <tr><td>Ongoing Time</td><td>${totalHours}小時</td></tr>
+                                <tr><td>Reflow status</td><td>ESDVT</td></tr>
+                                <tr><td>Jenkins Job URL</td><td><a href="${env.BUILD_URL}">${env.BUILD_URL}</a></td></tr>
+                                </table>
+                                </body>
+                                </html>
+                                """
+                        
+                                mail (
+                                    to: 'kent.peng@siliconmotion.com',
+                                    subject: "📋 [SVD ACE6 測試報告] ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                                    body: htmlBody,
+                                    mimeType: 'text/html'
+                                )
+                                sleep time: 24, unit: 'HOURS'
+                                totalHours += 24
+                            }
+                        }
+                        
+                    }
+                }
+            
+            }    
+            
         }
+
+       
 
 
 
