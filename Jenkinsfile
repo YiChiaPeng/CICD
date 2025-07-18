@@ -11,7 +11,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '🔄 Clone GitHub Repo: CICD...'
-                git 'https://github.com/YiChiaPeng/CICD.git', branch: 'main'
+                git url:'https://github.com/YiChiaPeng/CICD.git', branch: 'main'
                 // checkout([
                 //     $class: 'GitSCM',
                 //     branches: [[name: '*/main']],
